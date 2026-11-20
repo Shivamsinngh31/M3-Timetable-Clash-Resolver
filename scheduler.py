@@ -32,247 +32,281 @@ def generate_timetable():
     con = connect()
     cur = con.cursor()
 
-    cur.execute("""
-        SELECT section_id, course_id, faculty_id
-        FROM sections
-    """)
-    sections = cur.fetchall()
+    try:
+        cur.execute("""
+            SELECT section_id, course_id, faculty_id
+            FROM sections
+        """)
+        sections = cur.fetchall()
 
-    cur.execute("""
-        SELECT room_id, capacity
-        FROM rooms
-    """)
-    rooms = cur.fetchall()
+        cur.execute("""
+            SELECT room_id, capacity
+            FROM rooms
+        """)
+        rooms = cur.fetchall()
 
-    cur.execute("""
-        SELECT student_id, section_id
-        FROM enrollments
-    """)
-    enrollments = cur.fetchall()
+        cur.execute("""
+            SELECT student_id, section_id
+            FROM enrollments
+        """)
+        enrollments = cur.fetchall()
 
-    if not sections:
-        con.close()
-        return False, "No sections found.", []
+        if not sections:
+            return False, "No sections found.", []
 
-    if not rooms:
-        con.close()
-        return False, "No classrooms found.", []
+        if not rooms:
+            return False, "No classrooms found.", []
 
-    section_students = defaultdict(list)
+        # Store students section-wise
+        section_students = defaultdict(list)
 
-    for student_id, section_id in enrollments:
-        section_students[section_id].append(student_id)
+        for student_id, section_id in enrollments:
+            section_students[section_id].append(student_id)
 
-    # Check room capacity
-    for section_id, course_id, faculty_id in sections:
+        # Check classroom capacity
+        for section_id, course_id, faculty_id in sections:
 
-        required_seats = len(section_students[section_id])
+            required_seats = len(section_students[section_id])
 
-        if not any(
-            capacity >= required_seats
-            for room_id, capacity in rooms
-        ):
-            con.close()
-            return (
-                False,
-                f"Room capacity conflict for {section_id}. "
-                f"Required seats: {required_seats}",
-                []
-            )
-
-    # Create constraint model
-    model = cp_model.CpModel()
-
-    x = {}
-
-    section_options = defaultdict(list)
-    faculty_options = defaultdict(list)
-    room_options = defaultdict(list)
-    student_options = defaultdict(list)
-
-    # Create scheduling variables
-    for section_id, course_id, faculty_id in sections:
-
-        required_seats = len(section_students[section_id])
-
-        for day_index, day in enumerate(DAYS):
-
-            for slot_index, (start, end) in enumerate(TIME_SLOTS):
-
-                for room_id, capacity in rooms:
-
-                    if capacity < required_seats:
-                        continue
-
-                    key = (
-                        section_id,
-                        day_index,
-                        slot_index,
-                        room_id
-                    )
-
-                    variable = model.NewBoolVar(
-                        f"{section_id}_{day_index}_{slot_index}_{room_id}"
-                    )
-
-                    x[key] = variable
-
-                    section_options[section_id].append(variable)
-
-                    faculty_options[
-                        (faculty_id, day_index, slot_index)
-                    ].append(variable)
-
-                    room_options[
-                        (room_id, day_index, slot_index)
-                    ].append(variable)
-
-                    for student_id in section_students[section_id]:
-
-                        student_options[
-                            (student_id, day_index, slot_index)
-                        ].append(variable)
-
-    # Every section must be scheduled exactly once
-    for section_id, course_id, faculty_id in sections:
-
-        model.Add(
-            sum(section_options[section_id]) == 1
-        )
-
-    # Faculty cannot teach two sections at the same time
-    for variables in faculty_options.values():
-        model.Add(sum(variables) <= 1)
-
-    # Room cannot host two sections at the same time
-    for variables in room_options.values():
-        model.Add(sum(variables) <= 1)
-
-    # Student cannot attend two sections at the same time
-    for variables in student_options.values():
-        model.Add(sum(variables) <= 1)
-
-    # Maximum three consecutive lectures per student
-    for student_id in section_students:
-
-        for day_index in range(len(DAYS)):
-
-            for start_index in range(len(TIME_SLOTS) - 3):
-
-                window = TIME_SLOTS[
-                    start_index:start_index + 4
-                ]
-
-                # Do not count across the lunch break
-                continuous = all(
-                    window[i][1] == window[i + 1][0]
-                    for i in range(3)
+            if not any(
+                capacity >= required_seats
+                for room_id, capacity in rooms
+            ):
+                return (
+                    False,
+                    f"Room capacity conflict for {section_id}. "
+                    f"Required seats: {required_seats}",
+                    []
                 )
 
-                if not continuous:
-                    continue
+        # Create constraint model
+        model = cp_model.CpModel()
 
-                variables = []
+        x = {}
 
-                for slot_index in range(
-                    start_index,
-                    start_index + 4
-                ):
+        section_options = defaultdict(list)
+        faculty_options = defaultdict(list)
+        room_options = defaultdict(list)
 
-                    variables.extend(
-                        student_options.get(
-                            (student_id, day_index, slot_index),
-                            []
+        # Stores room alternatives for each section and time slot
+        section_slot_options = defaultdict(list)
+
+        # Create scheduling variables
+        for section_id, course_id, faculty_id in sections:
+
+            required_seats = len(section_students[section_id])
+
+            for day_index, day in enumerate(DAYS):
+
+                for slot_index, (start, end) in enumerate(TIME_SLOTS):
+
+                    for room_id, capacity in rooms:
+
+                        if capacity < required_seats:
+                            continue
+
+                        key = (
+                            section_id,
+                            day_index,
+                            slot_index,
+                            room_id
                         )
+
+                        variable = model.NewBoolVar(
+                            f"{section_id}_{day_index}_{slot_index}_{room_id}"
+                        )
+
+                        x[key] = variable
+
+                        section_options[section_id].append(variable)
+
+                        faculty_options[
+                            (faculty_id, day_index, slot_index)
+                        ].append(variable)
+
+                        room_options[
+                            (room_id, day_index, slot_index)
+                        ].append(variable)
+
+                        section_slot_options[
+                            (section_id, day_index, slot_index)
+                        ].append(variable)
+
+        # Every section must be scheduled exactly once
+        for section_id, course_id, faculty_id in sections:
+
+            model.Add(
+                sum(section_options[section_id]) == 1
+            )
+
+        # Faculty cannot teach two sections at the same time
+        for variables in faculty_options.values():
+            model.Add(sum(variables) <= 1)
+
+        # Room cannot host two sections at the same time
+        for variables in room_options.values():
+            model.Add(sum(variables) <= 1)
+
+        # Create one expression per section and time slot.
+        # This avoids repeating every classroom variable for every student.
+        section_slot_presence = {}
+
+        for key, variables in section_slot_options.items():
+
+            section_slot_presence[key] = sum(variables)
+
+        # Student scheduling options
+        student_options = defaultdict(list)
+
+        for section_id, students in section_students.items():
+
+            for day_index in range(len(DAYS)):
+
+                for slot_index in range(len(TIME_SLOTS)):
+
+                    presence = section_slot_presence.get(
+                        (section_id, day_index, slot_index)
                     )
 
-                model.Add(sum(variables) <= 3)
+                    if presence is not None:
 
-    # Prefer earlier days and time slots
-    objective_terms = []
+                        for student_id in students:
 
-    for key, variable in x.items():
+                            student_options[
+                                (student_id, day_index, slot_index)
+                            ].append(presence)
 
-        section_id, day_index, slot_index, room_id = key
+        # Student cannot attend two sections at the same time
+        for variables in student_options.values():
+            model.Add(sum(variables) <= 1)
 
-        cost = day_index * 7 + slot_index
+        # Maximum three consecutive lectures per student
+        for student_id in section_students:
 
-        objective_terms.append(cost * variable)
+            for day_index in range(len(DAYS)):
 
-    model.Minimize(sum(objective_terms))
+                for start_index in range(len(TIME_SLOTS) - 3):
 
-    # Solve model
-    solver = cp_model.CpSolver()
+                    window = TIME_SLOTS[
+                        start_index:start_index + 4
+                    ]
 
-    solver.parameters.max_time_in_seconds = 55
-    solver.parameters.num_search_workers = 8
+                    # Do not count across the lunch break
+                    continuous = all(
+                        window[i][1] == window[i + 1][0]
+                        for i in range(3)
+                    )
 
-    status = solver.Solve(model)
+                    if not continuous:
+                        continue
 
-    if status not in (
-        cp_model.OPTIMAL,
-        cp_model.FEASIBLE
-    ):
+                    variables = []
 
-        con.close()
+                    for slot_index in range(
+                        start_index,
+                        start_index + 4
+                    ):
 
-        if status == cp_model.INFEASIBLE:
-            return (
-                False,
-                "No feasible timetable exists for the current constraints.",
-                []
-            )
+                        variables.extend(
+                            student_options.get(
+                                (student_id, day_index, slot_index),
+                                []
+                            )
+                        )
 
-        if status == cp_model.UNKNOWN:
-            return (
-                False,
-                "Time limit reached. No solution was found.",
-                []
-            )
+                    model.Add(sum(variables) <= 3)
 
-        return False, "Unable to generate timetable.", []
+        # Prefer earlier days and time slots
+        objective_terms = []
 
-    # Collect scheduled sections
-    timetable = []
-
-    for key, variable in x.items():
-
-        if solver.Value(variable) == 1:
+        for key, variable in x.items():
 
             section_id, day_index, slot_index, room_id = key
 
-            start, end = TIME_SLOTS[slot_index]
+            cost = day_index * 7 + slot_index
 
-            timetable.append({
-                "section_id": section_id,
-                "room_id": room_id,
-                "day": DAYS[day_index],
-                "start_time": start,
-                "end_time": end
-            })
+            objective_terms.append(cost * variable)
 
-    # Save timetable
-    for item in timetable:
+        model.Minimize(sum(objective_terms))
 
-        cur.execute("""
-            UPDATE sections
-            SET room_id = ?,
-                day = ?,
-                start_time = ?,
-                end_time = ?
-            WHERE section_id = ?
-        """, (
-            item["room_id"],
-            item["day"],
-            item["start_time"],
-            item["end_time"],
-            item["section_id"]
-        ))
+        # Solve model
+        solver = cp_model.CpSolver()
 
-    con.commit()
-    con.close()
+        solver.parameters.max_time_in_seconds = 25
+        solver.parameters.num_search_workers = 1
 
-    return True, "Timetable generated successfully!", timetable
+        status = solver.Solve(model)
+
+        if status not in (
+            cp_model.OPTIMAL,
+            cp_model.FEASIBLE
+        ):
+
+            if status == cp_model.INFEASIBLE:
+                return (
+                    False,
+                    "No feasible timetable exists for the current constraints.",
+                    []
+                )
+
+            if status == cp_model.UNKNOWN:
+                return (
+                    False,
+                    "Time limit reached. No solution was found.",
+                    []
+                )
+
+            return False, "Unable to generate timetable.", []
+
+        # Collect scheduled sections
+        timetable = []
+
+        for key, variable in x.items():
+
+            if solver.Value(variable) == 1:
+
+                section_id, day_index, slot_index, room_id = key
+
+                start, end = TIME_SLOTS[slot_index]
+
+                timetable.append({
+                    "section_id": section_id,
+                    "room_id": room_id,
+                    "day": DAYS[day_index],
+                    "start_time": start,
+                    "end_time": end
+                })
+
+        # Save timetable
+        for item in timetable:
+
+            cur.execute("""
+                UPDATE sections
+                SET room_id = ?,
+                    day = ?,
+                    start_time = ?,
+                    end_time = ?
+                WHERE section_id = ?
+            """, (
+                item["room_id"],
+                item["day"],
+                item["start_time"],
+                item["end_time"],
+                item["section_id"]
+            ))
+
+        con.commit()
+
+        return True, "Timetable generated successfully!", timetable
+
+    except Exception as e:
+
+        con.rollback()
+
+        return False, f"Timetable generation error: {str(e)}", []
+
+    finally:
+        con.close()
 
 
 # CHECK ALL TIMETABLE CLASHES
@@ -281,27 +315,29 @@ def check_clashes():
     con = connect()
     cur = con.cursor()
 
-    cur.execute("""
-        SELECT
-            section_id,
-            faculty_id,
-            room_id,
-            day,
-            start_time,
-            end_time
-        FROM sections
-    """)
+    try:
+        cur.execute("""
+            SELECT
+                section_id,
+                faculty_id,
+                room_id,
+                day,
+                start_time,
+                end_time
+            FROM sections
+        """)
 
-    sections = cur.fetchall()
+        sections = cur.fetchall()
 
-    cur.execute("""
-        SELECT student_id, section_id
-        FROM enrollments
-    """)
+        cur.execute("""
+            SELECT student_id, section_id
+            FROM enrollments
+        """)
 
-    enrollments = cur.fetchall()
+        enrollments = cur.fetchall()
 
-    con.close()
+    finally:
+        con.close()
 
     clashes = []
 
@@ -312,7 +348,7 @@ def check_clashes():
             and b_start < a_end
         )
 
-    # Check lunch break violations (1 PM to 2 PM)
+    # Check lunch break violations
     for section in sections:
 
         section_id = section[0]
@@ -320,7 +356,7 @@ def check_clashes():
         start = section[4]
         end = section[5]
 
-        if start < "14:00" and end > "13:00":
+        if start and end and start < "14:00" and end > "13:00":
 
             clashes.append(
                 f"Lunch break violation: {section_id} on {day}"
@@ -340,7 +376,13 @@ def check_clashes():
             a = sections[i]
             b = sections[j]
 
+            if not a[3] or not b[3]:
+                continue
+
             if a[3] != b[3]:
+                continue
+
+            if not a[4] or not a[5] or not b[4] or not b[5]:
                 continue
 
             if not overlaps(a[4], a[5], b[4], b[5]):
@@ -381,6 +423,9 @@ def check_clashes():
         day = section[3]
         start = section[4]
         end = section[5]
+
+        if not day or not start or not end:
+            continue
 
         for student_id in section_students[section_id]:
 
