@@ -144,9 +144,13 @@ elif menu == "Generate Timetable":
             st.dataframe(df, use_container_width=True)
 
             if generation_time <= 60:
-                st.success("Generation completed within the 60-second target.")
+                st.success(
+                    "Generation completed within the 60-second target."
+                )
             else:
-                st.warning("Generation exceeded the 60-second target.")
+                st.warning(
+                    "Generation exceeded the 60-second target."
+                )
 
         else:
 
@@ -214,8 +218,8 @@ elif menu == "Check Clashes":
     st.header("Timetable Clash Checker")
 
     st.write(
-        "Check student, faculty, classroom, capacity "
-        "and back-to-back lecture constraints."
+        "Check student, faculty, classroom, capacity, "
+        "back-to-back and lunch-break constraints."
     )
 
     if st.button("Check Clashes", type="primary"):
@@ -223,20 +227,28 @@ elif menu == "Check Clashes":
         clashes = check_clashes()
 
         student_clashes = [
-            x for x in clashes if x.startswith("Student clash:")
+            x for x in clashes
+            if x.startswith("Student clash:")
         ]
 
         faculty_clashes = [
-            x for x in clashes if x.startswith("Faculty clash:")
+            x for x in clashes
+            if x.startswith("Faculty clash:")
         ]
 
         room_clashes = [
-            x for x in clashes if x.startswith("Classroom clash:")
+            x for x in clashes
+            if x.startswith("Classroom clash:")
         ]
 
         consecutive_clashes = [
             x for x in clashes
             if x.startswith("Back-to-back violation:")
+        ]
+
+        lunch_clashes = [
+            x for x in clashes
+            if x.startswith("Lunch break violation:")
         ]
 
         capacity_clashes = get_data("""
@@ -261,21 +273,52 @@ elif menu == "Check Clashes":
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric("Student Clashes", len(student_clashes))
-        col2.metric("Faculty Clashes", len(faculty_clashes))
-        col3.metric("Classroom Clashes", len(room_clashes))
+        col1.metric(
+            "Student Clashes",
+            len(student_clashes)
+        )
 
-        col4, col5 = st.columns(2)
+        col2.metric(
+            "Faculty Clashes",
+            len(faculty_clashes)
+        )
 
-        col4.metric("Capacity Violations", len(capacity_clashes))
+        col3.metric(
+            "Classroom Clashes",
+            len(room_clashes)
+        )
+
+        col4, col5, col6 = st.columns(3)
+
+        col4.metric(
+            "Capacity Violations",
+            len(capacity_clashes)
+        )
+
         col5.metric(
             "Back-to-back Violations",
             len(consecutive_clashes)
         )
 
-        if clashes or not capacity_clashes.empty:
+        col6.metric(
+            "Lunch Break Violations",
+            len(lunch_clashes)
+        )
 
-            st.error("Some timetable violations were found.")
+        total_violations = (
+            len(student_clashes)
+            + len(faculty_clashes)
+            + len(room_clashes)
+            + len(consecutive_clashes)
+            + len(lunch_clashes)
+            + len(capacity_clashes)
+        )
+
+        if total_violations > 0:
+
+            st.error(
+                f"Found {total_violations} timetable violations."
+            )
 
             for clash in student_clashes:
                 st.write("❌", clash)
@@ -287,6 +330,9 @@ elif menu == "Check Clashes":
                 st.write("❌", clash)
 
             for clash in consecutive_clashes:
+                st.write("❌", clash)
+
+            for clash in lunch_clashes:
                 st.write("❌", clash)
 
             if not capacity_clashes.empty:
@@ -301,6 +347,6 @@ elif menu == "Check Clashes":
         else:
 
             st.success(
-                "All five validation checks passed. "
+                "All six validation checks passed. "
                 "No violations found."
             )
