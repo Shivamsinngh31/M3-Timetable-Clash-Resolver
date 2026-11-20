@@ -312,6 +312,20 @@ def check_clashes():
             and b_start < a_end
         )
 
+    # Check lunch break violations (1 PM to 2 PM)
+    for section in sections:
+
+        section_id = section[0]
+        day = section[3]
+        start = section[4]
+        end = section[5]
+
+        if start < "14:00" and end > "13:00":
+
+            clashes.append(
+                f"Lunch break violation: {section_id} on {day}"
+            )
+
     # Student enrollments
     section_students = defaultdict(list)
 
